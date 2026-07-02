@@ -1,0 +1,38 @@
+{
+  "name": "magefall-last-spell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"cross-env ALLOW_TEST_MODE=true tsx watch server/src/index.ts\"",
+    "dev:client": "vite",
+    "dev:server": "cross-env ALLOW_TEST_MODE=true tsx watch server/src/index.ts",
+    "dev:e2e": "cross-env PORT=3100 VITE_PORT=5180 SERVER_PORT=3100 ALLOW_TEST_MODE=true concurrently \"vite --strictPort\" \"tsx server/src/index.ts\"",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsc -p server/tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "check": "npm run typecheck && npm run test:unit && npm run build",
+    "start": "node dist/server/server/src/index.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.1",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.0.10",
+    "@types/three": "^0.178.1",
+    "concurrently": "^9.2.0",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.4"
+  }
+}
