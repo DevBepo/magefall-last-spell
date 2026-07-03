@@ -1,6 +1,6 @@
 # Magefall: Last Spell
 
-Um arena roguelite 3D experimental para quatro amigos. O grupo enfrenta três bosses, escolhe itens entre as lutas e termina a partida em um confronto PvP. A simulação multiplayer é autoritativa no servidor.
+Um arena roguelite 3D experimental para grupos de amigos. Cada grupo cria uma sala privada por código, enfrenta três bosses, escolhe itens entre as lutas e termina a partida em um confronto PvP. A simulação multiplayer é autoritativa no servidor.
 
 > Este é um projeto pequeno, experimental e deliberadamente bobo, feito para jogar entre amigos e publicado como projeto de portfólio. Não espere matchmaking, persistência ou a robustez de um jogo comercial.
 
@@ -16,8 +16,11 @@ Um arena roguelite 3D experimental para quatro amigos. O grupo enfrenta três bo
 - `WASD`: movimento
 - Mouse: mira
 - Clique esquerdo: ataque
+- `Setas` ou `IJKL`: mira alternativa sem mouse
+- `Enter`: ataque pelo teclado
 - `Espaço`: dash
 - `Q`: habilidade especial
+- `E`: usa a relíquia ativa obtida após o terceiro boss
 
 ## Rodando localmente
 
@@ -30,6 +33,16 @@ npm run dev
 
 O Vite abre em `http://127.0.0.1:5173` e encaminha o Socket.IO para o servidor em `http://127.0.0.1:3000`.
 
+### Salas privadas
+
+1. Um jogador informa seu nome e clica em **Criar sala**.
+2. Ele compartilha o código de cinco caracteres mostrado no lobby.
+3. Os amigos informam seus nomes e usam **Entrar em sala** com esse código.
+4. Cada participante escolhe qualquer mago; magos podem se repetir.
+5. O host inicia manualmente quando ao menos dois jogadores tiverem escolhido.
+
+Cada sala aceita de 2 a 6 jogadores; quatro é a quantidade recomendada. A primeira pessoa é host. Se ela desconectar, o jogador conectado mais antigo assume. Não existem salas públicas, lista de salas, entrada aleatória ou matchmaking.
+
 ### Modo offline
 
 Com o ambiente de desenvolvimento rodando, abra:
@@ -40,7 +53,7 @@ http://127.0.0.1:5173/?offline=1
 
 ### Multiplayer com 2 jogadores
 
-Abra a URL abaixo em dois navegadores, perfis ou janelas anônimas diferentes:
+Abra a URL abaixo em dois navegadores, perfis ou janelas anônimas diferentes. Crie a sala no primeiro, entre pelo código no segundo, escolha os magos e inicie como host:
 
 ```text
 http://127.0.0.1:5173/?test=1&players=2
@@ -48,7 +61,7 @@ http://127.0.0.1:5173/?test=1&players=2
 
 ### Multiplayer com 4 jogadores
 
-Para uma partida normal, abra `http://127.0.0.1:5173/` em quatro perfis e escolha quatro magos diferentes. Para acelerar o fluxo em desenvolvimento, use em quatro perfis:
+Para uma partida normal, abra `http://127.0.0.1:5173/` em quatro perfis, entre na mesma sala privada e escolha os magos (repetidos são permitidos). Para acelerar o fluxo em desenvolvimento, use em quatro perfis:
 
 ```text
 http://127.0.0.1:5173/?test=1&players=4
@@ -89,11 +102,11 @@ O Railway fornece `PORT` automaticamente. Não habilite `ALLOW_TEST_MODE` em pro
 
 ## Arquitetura e limitações conhecidas
 
-- Há uma única `GameRoom` em memória, limitada a quatro conexões.
+- Há um `RoomManager` em memória, com uma `GameRoom` isolada para cada código privado e até seis conexões por sala.
 - A simulação roda no servidor a 20 Hz, com snapshots a 12 Hz.
 - O client envia somente comandos; o servidor controla posições, colisões, HP, cooldowns, itens, bosses, projéteis, fases e vencedor.
 - A reconexão usa um token aleatório no `localStorage` por até 30 segundos.
-- Não há login, nickname, matchmaking, banco de dados nem persistência.
+- Nicknames são locais e não exigem conta. Não há login, matchmaking, descoberta pública, banco de dados nem persistência.
 - Reiniciar o processo encerra a partida atual; múltiplas réplicas não compartilham estado.
 - O modo offline é separado da simulação multiplayer e serve para testes rápidos.
 

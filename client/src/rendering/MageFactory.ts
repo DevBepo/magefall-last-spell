@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { MAGES } from '../../../shared/config/mages';
 import type { MageId } from '../../../shared/types';
 
-export function createMageModel(mageId: MageId, scale = 1): THREE.Group {
+export function createMageModel(mageId: MageId, scale = 1, playerColor?: number): THREE.Group {
   const cfg = MAGES[mageId];
   const group = new THREE.Group();
   group.userData.baseY = 0;
@@ -83,7 +83,7 @@ export function createMageModel(mageId: MageId, scale = 1): THREE.Group {
 
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(.72, .82, 32),
-    new THREE.MeshBasicMaterial({ color: cfg.accent, transparent: true, opacity: .55, side: THREE.DoubleSide }),
+    new THREE.MeshBasicMaterial({ color: playerColor ?? cfg.accent, transparent: true, opacity: .8, side: THREE.DoubleSide }),
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = .025;

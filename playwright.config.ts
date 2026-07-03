@@ -7,7 +7,7 @@ export default defineConfig({
   workers: 1,
   use: { baseURL: 'http://127.0.0.1:5180', headless: true, viewport: { width: 960, height: 640 } },
   webServer: {
-    command: 'npm run dev:e2e',
+    command: 'node scripts/e2e-server.mjs',
     url: 'http://127.0.0.1:5180',
     timeout: 30_000,
     reuseExistingServer: false,

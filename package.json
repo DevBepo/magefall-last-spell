@@ -7,7 +7,7 @@
     "dev": "concurrently \"vite\" \"cross-env ALLOW_TEST_MODE=true tsx watch server/src/index.ts\"",
     "dev:client": "vite",
     "dev:server": "cross-env ALLOW_TEST_MODE=true tsx watch server/src/index.ts",
-    "dev:e2e": "cross-env PORT=3100 VITE_PORT=5180 SERVER_PORT=3100 ALLOW_TEST_MODE=true concurrently \"vite --strictPort\" \"tsx server/src/index.ts\"",
+    "dev:e2e": "node scripts/e2e-server.mjs",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p server/tsconfig.json",

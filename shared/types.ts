@@ -2,7 +2,8 @@ export type MageId = 'ice' | 'fire' | 'shadow' | 'light';
 export type ItemId =
   | 'vital-crystal' | 'power-rune' | 'arcane-boots' | 'rapid-focus'
   | 'fluid-core' | 'mystic-hourglass' | 'double-shot' | 'entry-shield'
-  | 'elemental-echo' | 'explosive-step' | 'wounded-hunter' | 'reactive-barrier';
+  | 'elemental-echo' | 'explosive-step' | 'wounded-hunter' | 'reactive-barrier'
+  | 'blink-rune' | 'healing-shard' | 'repulse-orb' | 'time-crystal';
 
 export type GamePhase =
   | 'loading' | 'mage-selection'

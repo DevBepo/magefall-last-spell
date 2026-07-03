@@ -7,6 +7,8 @@ export interface ItemConfig {
   description: string;
   color: string;
   apply: (stats: Stats) => Stats;
+  active?: boolean;
+  cooldown?: number;
 }
 
 const item = (id: ItemId, name: string, icon: string, description: string, color: string, apply: (s: Stats) => Stats): ItemConfig => ({ id, name, icon, description, color, apply });
@@ -24,9 +26,14 @@ export const ITEMS: Record<ItemId, ItemConfig> = {
   'explosive-step': item('explosive-step', 'Passo Explosivo', '✹', 'Dash causa 12 de dano ao terminar.', '#ff7557', s => ({ ...s })),
   'wounded-hunter': item('wounded-hunter', 'Caçador Ferido', '⌁', '+20% de dano contra alvos com pouca vida.', '#e85c78', s => ({ ...s })),
   'reactive-barrier': item('reactive-barrier', 'Barreira Reativa', '⬢', 'Primeiro dano a cada 12s é reduzido à metade.', '#8da8ff', s => ({ ...s })),
+  'blink-rune': { ...item('blink-rune', 'Runa de Blink', '◇', 'E: teleporta na direção da mira.', '#63e6ff', s => ({ ...s })), active: true, cooldown: 9 },
+  'healing-shard': { ...item('healing-shard', 'Fragmento de Cura', '✚', 'E: recupera 35% da vida máxima.', '#63f59a', s => ({ ...s })), active: true, cooldown: 14 },
+  'repulse-orb': { ...item('repulse-orb', 'Orbe de Repulsão', '◉', 'E: afasta e fere inimigos próximos.', '#e07cff', s => ({ ...s })), active: true, cooldown: 11 },
+  'time-crystal': { ...item('time-crystal', 'Cristal do Tempo', '⌛', 'E: restaura dash e especial.', '#ffd76e', s => ({ ...s })), active: true, cooldown: 16 },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];
+export const ACTIVE_ITEM_IDS = ITEM_IDS.filter(id => ITEMS[id].active);
 
 export function calculateStats(base: Stats, itemIds: ItemId[]): Stats {
   return itemIds.reduce((stats, id) => ITEMS[id].apply(stats), { ...base });
@@ -38,7 +45,8 @@ export function addItem(current: ItemId[], id: ItemId): ItemId[] {
 }
 
 export function offerForLevel(level: number, owned: ItemId[]): ItemId[] {
-  const available = ITEM_IDS.filter(id => !owned.includes(id));
+  const pool = level === 3 ? ACTIVE_ITEM_IDS : level === 1 ? ITEM_IDS.filter(id => !ITEMS[id].active) : ITEM_IDS;
+  const available = pool.filter(id => !owned.includes(id));
   const start = ((level - 1) * 3) % available.length;
   return [0, 1, 2].map(i => available[(start + i * 3) % available.length]!).filter((id, i, all) => all.indexOf(id) === i);
 }

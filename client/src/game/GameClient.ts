@@ -16,6 +16,7 @@ interface Actor extends Combatant {
   lastShotAt: number;
   lastDashAt: number;
   lastSpecialAt: number;
+  lastActiveAt: number;
   specialUntil: number;
   echoReady: boolean;
   hitCount: number;
@@ -42,6 +43,7 @@ interface Telegraph {
   damage: number;
   position: THREE.Vector3;
 }
+interface OfflineMinion { mesh: THREE.Group; hp: number; lastHitAt: number }
 
 const PHASE_NAMES = ['Guardião de Pedra', 'Serpente de Cristal', 'Arquimago do Vazio'];
 const OBSTACLES = [{ x: -6, z: -4, r: 1.65 }, { x: 5, z: 4, r: 1.65 }, { x: -5, z: 6, r: 1.65 }, { x: 6, z: -6, r: 1.65 }];
@@ -60,6 +62,7 @@ export class GameClient {
   private readonly actors: Actor[] = [];
   private readonly projectiles: Projectile[] = [];
   private readonly telegraphs: Telegraph[] = [];
+  private readonly minions: OfflineMinion[] = [];
   private readonly testMode = new URLSearchParams(location.search).has('test');
   private input!: InputController;
   private player?: Actor;
@@ -149,6 +152,7 @@ export class GameClient {
   private startFarm(level: number): void {
     this.level = level;
     this.clearCombat();
+    this.arena.scale.setScalar(1);
     const stats = calculateStats(MAGES[this.mageId].stats, this.items);
     this.player = this.createActor('player', this.mageId, { x: 0, z: 9.5 }, false, stats);
     this.player.shield = stats.shield;
@@ -173,7 +177,7 @@ export class GameClient {
       id, mage, position: { ...position }, velocity: { x: 0, z: 0 }, hp: stats.maxHp,
       shield: stats.shield, radius: .62, alive: true, invulnerableUntil: 0, slowedUntil: 0,
       frozenUntil: 0, freezeImmuneUntil: 0, lastDamagedAt: -99, model, stats: { ...stats }, isBot,
-      lastShotAt: -99, lastDashAt: -99, lastSpecialAt: -99, specialUntil: 0,
+      lastShotAt: -99, lastDashAt: -99, lastSpecialAt: -99, lastActiveAt: -99, specialUntil: 0,
       echoReady: false, hitCount: 0, barrierReadyAt: 0, aiAngle: Math.random() * Math.PI * 2,
     };
   }
@@ -195,6 +199,7 @@ export class GameClient {
       this.updateBots(dt);
       this.updateProjectiles(dt);
       this.updateBoss(dt);
+      this.updateMinions(dt);
       this.updateTelegraphs();
       this.updateCamera(dt);
       this.updateHud();
@@ -227,10 +232,12 @@ export class GameClient {
       this.burst(p.position, MAGES[p.mage].accent, 12);
     }
     this.moveActor(p, direction.x * speed * dt, direction.y * speed * dt);
-    const aim = new THREE.Vector2(this.pointerWorld.x - p.position.x, this.pointerWorld.z - p.position.z);
+    const mouseAim = new THREE.Vector2(this.pointerWorld.x - p.position.x, this.pointerWorld.z - p.position.z).normalize();
+    const aim = this.input.keyboardAim() ?? (this.input.shooting ? mouseAim : this.input.aimFallback());
     if (aim.lengthSq() > .01) p.model.rotation.y = Math.atan2(aim.x, aim.y);
-    if (this.input.shooting) this.shoot(p, aim.normalize());
-    if (this.input.consumeSpecial()) this.useSpecial(p, aim.normalize());
+    if (this.input.shooting || this.input.keyboardShooting) this.shoot(p, aim);
+    if (this.input.consumeSpecial()) this.useSpecial(p, aim);
+    if (this.input.consumeActive()) this.useActive(p, aim);
     if (p.mage === 'light' && now - p.lastDamagedAt > 4 && p.hp < p.stats.maxHp) p.hp = Math.min(p.stats.maxHp, p.hp + 3 * dt);
   }
 
@@ -239,11 +246,13 @@ export class GameClient {
     let x = actor.position.x + dx;
     let z = actor.position.z + dz;
     const length = Math.hypot(x, z);
-    if (length > ARENA_RADIUS) { x *= ARENA_RADIUS / length; z *= ARENA_RADIUS / length; }
+    const radius = this.state.phase === 'pvp' ? 25.5 : ARENA_RADIUS;
+    if (length > radius) { x *= radius / length; z *= radius / length; }
+    const obstacleScale = this.state.phase === 'pvp' ? 1.55 : 1;
     for (const o of OBSTACLES) {
-      const dist = Math.hypot(x - o.x, z - o.z);
-      const min = actor.radius + o.r;
-      if (dist < min) { const nx = (x - o.x) / (dist || 1); const nz = (z - o.z) / (dist || 1); x = o.x + nx * min; z = o.z + nz * min; }
+      const ox=o.x*obstacleScale, oz=o.z*obstacleScale, dist = Math.hypot(x - ox, z - oz);
+      const min = actor.radius + o.r*obstacleScale;
+      if (dist < min) { const nx = (x - ox) / (dist || 1); const nz = (z - oz) / (dist || 1); x = ox + nx * min; z = oz + nz * min; }
     }
     actor.position.x = x; actor.position.z = z;
     actor.model.position.x = x; actor.model.position.z = z;
@@ -297,6 +306,7 @@ export class GameClient {
         this.boss.hp -= this.projectileDamage(p, undefined);
         hit = true;
       }
+      if (p.owner === this.player) for (let mi = this.minions.length - 1; mi >= 0; mi--) { const m = this.minions[mi]!; if (segmentCircleHit(from, to, { x:m.mesh.position.x, z:m.mesh.position.z }, .75)) { m.hp -= p.damage; hit = true; if (m.hp <= 0) { this.scene.remove(m.mesh); this.minions.splice(mi,1); } break; } }
       for (const target of this.actors) {
         if (target === p.owner || !target.alive || target.isBot === p.owner.isBot && this.state.phase === 'pvp') continue;
         if (segmentCircleHit(from, to, target.position, target.radius + p.radius)) {
@@ -307,7 +317,7 @@ export class GameClient {
           hit = true; break;
         }
       }
-      if (p.age > 2.5 || Math.hypot(to.x, to.z) > 18 || hit) this.removeProjectile(i, p, hit);
+      if (p.age > 2.5 || Math.hypot(to.x, to.z) > (this.state.phase === 'pvp' ? 29 : 18) || hit) this.removeProjectile(i, p, hit);
     }
   }
 
@@ -334,6 +344,16 @@ export class GameClient {
     for (const target of this.actors) if (target !== owner && target.alive && Math.hypot(target.position.x - center.x, target.position.z - center.z) <= radius) this.damageActor(target, damage, owner);
   }
 
+  private useActive(actor: Actor, aim: THREE.Vector2): void {
+    const id = this.items.find(item => ITEMS[item].active); if (!id) return;
+    const cooldown = ITEMS[id].cooldown ?? 12; if (!cooldownReady(this.elapsed, actor.lastActiveAt, cooldown)) return; actor.lastActiveAt = this.elapsed;
+    if (id === 'blink-rune') this.moveActor(actor, aim.x * 7, aim.y * 7);
+    if (id === 'healing-shard') actor.hp = Math.min(actor.stats.maxHp, actor.hp + actor.stats.maxHp * .35);
+    if (id === 'time-crystal') { actor.lastDashAt = -99; actor.lastSpecialAt = -99; }
+    if (id === 'repulse-orb') { this.areaDamage(actor, actor.position, 6, 14); for (const target of this.actors) if (target !== actor) { const d = new THREE.Vector2(target.position.x - actor.position.x, target.position.z - actor.position.z); if (d.length() < 6) { d.normalize(); this.moveActor(target, d.x * 4, d.y * 4); } } }
+    this.burst(actor.position, ITEMS[id].color.replace('#', '0x') as unknown as number, 22);
+  }
+
   private updateBoss(dt: number): void {
     const b = this.boss;
     if (!b || !this.player?.alive) return;
@@ -349,9 +369,12 @@ export class GameClient {
         this.createTelegraph({ x: target.x, z: target.z }, 2, 16, .7);
         this.createTelegraph({ x: -target.x * .4, z: -target.z * .4 }, 2, 16, 1.05);
       }
-      if (b.level === 3) for (let i = 0; i < (b.hp < b.maxHp * .35 ? 4 : 2); i++) this.createTelegraph({ x: target.x + (i - 1) * 2.6, z: target.z + Math.sin(i * 2) * 2 }, 1.8, 18, .65 + i * .12);
+      if (b.level === 3) { for (let i = 0; i < (b.hp < b.maxHp * .35 ? 4 : 2); i++) this.createTelegraph({ x: target.x + (i - 1) * 2.6, z: target.z + Math.sin(i * 2) * 2 }, 1.8, 18, .65 + i * .12); if (this.minions.length < 6) this.spawnMinions(); }
     }
   }
+
+  private spawnMinions(): void { for (let i = 0; i < 2 && this.minions.length < 6; i++) { const g = new THREE.Group(); const body = new THREE.Mesh(new THREE.DodecahedronGeometry(.55), new THREE.MeshStandardMaterial({ color: 0x1a092a, emissive: 0x6d1499, emissiveIntensity: 1 })); const eyes = new THREE.Mesh(new THREE.BoxGeometry(.35,.08,.08), new THREE.MeshBasicMaterial({ color: 0xff3cff })); eyes.position.set(0,.12,.5); g.add(body, eyes); g.position.set(i ? 3 : -3,.65,-3); this.scene.add(g); this.minions.push({ mesh:g, hp:28, lastHitAt:-99 }); } }
+  private updateMinions(dt: number): void { if (!this.player) return; for (const m of this.minions) { const d = new THREE.Vector2(this.player.position.x - m.mesh.position.x, this.player.position.z - m.mesh.position.z); const dist = d.length(); d.normalize(); m.mesh.position.x += d.x * 3.2 * dt; m.mesh.position.z += d.y * 3.2 * dt; m.mesh.rotation.y = Math.atan2(d.x,d.y); if (dist < 1.25 && this.elapsed - m.lastHitAt > 1.1) { m.lastHitAt = this.elapsed; this.damageActor(this.player,8); } } }
 
   private createTelegraph(position: Vec2, radius: number, damage: number, delay: number): void {
     const mesh = new THREE.Mesh(new THREE.CircleGeometry(radius, 32), new THREE.MeshBasicMaterial({ color: 0xff4058, transparent: true, opacity: .18, depthWrite: false, side: THREE.DoubleSide }));
@@ -431,11 +454,12 @@ export class GameClient {
 
   private startPvp(): void {
     this.clearCombat();
+    this.arena.scale.setScalar(1.55);
     const stats = calculateStats(MAGES[this.mageId].stats, this.items);
-    this.player = this.createActor('player', this.mageId, { x: 0, z: 11 }, false, stats);
+    this.player = this.createActor('player', this.mageId, { x: 0, z: 21 }, false, stats);
     this.player.shield = stats.shield; this.actors.push(this.player);
     const others = (Object.keys(MAGES) as MageId[]).filter(id => id !== this.mageId);
-    const positions = [{ x: -10, z: -7 }, { x: 10, z: -7 }, { x: 0, z: -11 }];
+    const positions = [{ x: -20, z: -12 }, { x: 20, z: -12 }, { x: 0, z: -21 }];
     others.forEach((mage, i) => {
       const botItems = offerForLevel(i + 1, []).slice(0, 3);
       const bot = this.createActor(`bot-${mage}`, mage, positions[i]!, true, calculateStats(MAGES[mage].stats, botItems));
@@ -460,6 +484,7 @@ export class GameClient {
     for (const a of this.actors) this.scene.remove(a.model); this.actors.length = 0;
     for (const p of this.projectiles) this.scene.remove(p.mesh); this.projectiles.length = 0;
     for (const t of this.telegraphs) this.scene.remove(t.mesh); this.telegraphs.length = 0;
+    for (const m of this.minions) this.scene.remove(m.mesh); this.minions.length = 0;
     if (this.boss) this.scene.remove(this.boss.model); this.boss = undefined; this.player = undefined;
   }
 
@@ -478,9 +503,10 @@ export class GameClient {
     const p = this.player!;
     const dashLeft = Math.max(0, p.stats.dashCooldown - (this.elapsed - p.lastDashAt));
     const specialLeft = Math.max(0, p.stats.specialCooldown - (this.elapsed - p.lastSpecialAt));
+    const active = this.items.find(id => ITEMS[id].active); const activeCooldown = active ? ITEMS[active].cooldown ?? 12 : 1;
     this.ui.updateHud({
       hp: p.hp, maxHp: p.stats.maxHp, shield: p.shield,
-      dash: dashLeft / p.stats.dashCooldown, special: specialLeft / p.stats.specialCooldown,
+      dash: dashLeft / p.stats.dashCooldown, special: specialLeft / p.stats.specialCooldown, active: active ? Math.max(0, activeCooldown - (this.elapsed - p.lastActiveAt)) / activeCooldown : undefined,
       items: this.items, bossHp: this.boss?.hp, bossMaxHp: this.boss?.maxHp,
       phaseLabel: this.boss ? PHASE_NAMES[this.boss.level - 1]! : this.state.phase === 'pvp' ? `${this.actors.filter(a => a.alive).length} MAGOS VIVOS` : '',
     });
