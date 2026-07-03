@@ -74,8 +74,11 @@ export class GameClient {
   private running = false;
   private arena = createArena();
   private flashLight = new THREE.PointLight(0xffffff, 0, 12);
+  private readonly soloMage?: MageId;
+  private readonly onFarmComplete?: (mage: MageId, items: ItemId[], stats: Stats) => void;
 
-  constructor(host: HTMLElement) {
+  constructor(host: HTMLElement, options: { soloMage?: MageId; onFarmComplete?: (mage: MageId, items: ItemId[], stats: Stats) => void } = {}) {
+    this.soloMage = options.soloMage; this.onFarmComplete = options.onFarmComplete;
     this.ui = new GameUI(host);
     this.ui.showLoading();
     this.setupRenderer();
@@ -83,7 +86,7 @@ export class GameClient {
     this.ui.onSelectMage = id => this.selectMage(id);
     this.ui.onSelectItem = id => this.selectItem(id);
     this.ui.onRestart = () => this.resetGame();
-    window.setTimeout(() => this.transition('mage-selection'), 900);
+    window.setTimeout(() => { this.transition('mage-selection'); if (this.soloMage) this.selectMage(this.soloMage); }, this.soloMage ? 50 : 900);
     window.addEventListener('resize', () => this.resize());
     if (this.testMode) window.addEventListener('keydown', e => this.handleTestKey(e));
   }
@@ -343,6 +346,7 @@ export class GameClient {
     if (this.boss && owner === this.player && Math.hypot(this.boss.model.position.x - center.x, this.boss.model.position.z - center.z) < radius + 2) this.boss.hp -= damage;
     for (const target of this.actors) if (target !== owner && target.alive && Math.hypot(target.position.x - center.x, target.position.z - center.z) <= radius) this.damageActor(target, damage, owner);
   }
+  stop(): void { this.running = false; this.clearCombat(); this.renderer.dispose(); }
 
   private useActive(actor: Actor, aim: THREE.Vector2): void {
     const id = this.items.find(item => ITEMS[item].active); if (!id) return;
@@ -447,8 +451,8 @@ export class GameClient {
       this.transition(next);
       this.startFarm(this.level + 1);
     } else {
-      this.transition('pvp');
-      this.startPvp();
+      if (this.onFarmComplete) { this.onFarmComplete(this.mageId, [...this.items], calculateStats(MAGES[this.mageId].stats, this.items)); }
+      else { this.transition('pvp'); this.startPvp(); }
     }
   }
 

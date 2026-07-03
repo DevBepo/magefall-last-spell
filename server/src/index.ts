@@ -19,6 +19,9 @@ io.on('connection', socket => {
   socket.on('join_room', (payload, ack) => ack(rooms.join(socket, payload.roomId, payload)));
   socket.on('select_mage', (mage, ack) => ack?.(rooms.roomFor(socket)?.selectMage(socket, mage) ?? { ok: false, message: 'Entre em uma sala primeiro.' }));
   socket.on('start_game', ack => ack?.(rooms.roomFor(socket)?.startGame(socket) ?? { ok: false, message: 'Sala não encontrada.' }));
+  socket.on('farm_progress', progress => rooms.roomFor(socket)?.updateFarmProgress(socket, progress));
+  socket.on('farm_completed', (build, ack) => ack?.(rooms.roomFor(socket)?.completeFarm(socket, build) ?? { ok: false, message: 'Sala não encontrada.' }));
+  socket.on('start_pvp', ack => ack?.(rooms.roomFor(socket)?.beginPvp(socket) ?? { ok: false, message: 'Sala não encontrada.' }));
   socket.on('player_input', input => rooms.roomFor(socket)?.setInput(socket, input));
   socket.on('dash', () => rooms.roomFor(socket)?.dash(socket));
   socket.on('special', () => rooms.roomFor(socket)?.special(socket));
@@ -26,6 +29,7 @@ io.on('connection', socket => {
   socket.on('choose_item', (item, ack) => ack?.(rooms.roomFor(socket)?.chooseItem(socket, item) ?? { ok: false, message: 'Sala não encontrada.' }));
   socket.on('reset_game', ack => { const result = rooms.roomFor(socket)?.reset(socket) ?? { ok: false, message: 'Sala não encontrada.' }; ack?.(result); });
   socket.on('test_action', action => rooms.roomFor(socket)?.testAction(socket, action));
+  socket.on('debug_ping', (sentAt, ack) => ack(sentAt));
   socket.on('disconnect', () => rooms.disconnect(socket));
 });
 

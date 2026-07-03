@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Server, Socket } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../shared/protocol';
 import { RoomManager } from '../server/src/RoomManager';
+import { calculateStats } from '../shared/config/items';
+import { MAGES } from '../shared/config/mages';
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 
@@ -48,5 +50,23 @@ describe('RoomManager', () => {
     const rooms = manager(1); const a = fakeSocket(); const b = fakeSocket(); const roomA = rooms.create(a, {}); const roomB = rooms.create(b, {});
     expect(roomA.roomId).not.toBe(roomB.roomId); rooms.disconnect(a); rooms.cleanupExpired(Date.now() + 5);
     expect(rooms.rooms.has(roomA.roomId!)).toBe(false); expect(rooms.rooms.has(roomB.roomId!)).toBe(true);
+  });
+
+  it('mantém snapshot compacto e com precisão limitada', () => {
+    const rooms = manager(); const host = fakeSocket(); const guest = fakeSocket(); const created = rooms.create(host, { name: 'Host' });
+    rooms.join(guest, created.roomId!, { name: 'Guest' }); const room = rooms.rooms.get(created.roomId!)!;
+    room.selectMage(host, 'ice'); room.selectMage(guest, 'fire'); const snapshot = room.snapshot(); const json = JSON.stringify(snapshot);
+    expect(new TextEncoder().encode(json).byteLength).toBeLessThan(2500);
+    expect(json).not.toContain('description'); expect(json).not.toContain('reconnectToken');
+    expect(snapshot.players.every(player => (String(player.position.x).split('.')[1]?.length ?? 0) <= 3)).toBe(true);
+  });
+  it('aceita farms individuais e inicia PvP somente com dois prontos', () => {
+    const rooms = manager(); const host = fakeSocket(); const guest = fakeSocket(); const third = fakeSocket(); const created = rooms.create(host, {});
+    rooms.join(guest, created.roomId!, {}); rooms.join(third, created.roomId!, {}); const room = rooms.rooms.get(created.roomId!)!;
+    room.selectMage(host, 'ice'); room.selectMage(guest, 'fire'); room.selectMage(third, 'shadow'); expect(room.startGame(host).ok).toBe(true); expect(room.phase).toBe('solo-farm');
+    const build = (mageId: 'ice' | 'fire') => ({ mageId, selectedItems: ['vital-crystal', 'power-rune'] as ['vital-crystal', 'power-rune'], activeRelic: 'blink-rune' as const, finalStats: calculateStats(MAGES[mageId].stats, ['vital-crystal', 'power-rune', 'blink-rune']), completedAt: Date.now() });
+    expect(room.completeFarm(host, build('ice')).ok).toBe(true); expect(room.beginPvp(host).ok).toBe(false);
+    expect(room.completeFarm(guest, build('fire')).ok).toBe(true); expect(room.beginPvp(guest).ok).toBe(false); expect(room.beginPvp(host).ok).toBe(true);
+    expect(room.phase).toBe('pvp'); expect(room.snapshot().players.filter(p => p.alive).map(p => p.id)).not.toContain(third.data.playerId);
   });
 });

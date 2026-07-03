@@ -1,4 +1,8 @@
-import type { GamePhase, ItemId, MageId, Vec2 } from './types.js';
+import type { FarmProgress, FarmStatus, GamePhase, ItemId, MageId, Stats, Vec2 } from './types.js';
+
+export interface FinalBuild { mageId: MageId; selectedItems: [ItemId, ItemId]; activeRelic: ItemId; finalStats: Stats; completedAt: number }
+export interface FarmPlayerState { playerId: string; nickname: string; mageId?: MageId; playerIndex: number; connected: boolean; farmStatus: FarmStatus; farmProgress: FarmProgress; selectedItems: ItemId[]; activeRelic?: ItemId; finalStats?: Stats; readyForPvp: boolean; isHost: boolean }
+export interface FarmRoomState { roomId: string; phase: GamePhase; players: FarmPlayerState[]; canStartPvp: boolean }
 
 export interface ClientInput { sequence: number; movement: Vec2; aim: Vec2; shooting: boolean }
 export interface PlayerSnapshot {
@@ -24,13 +28,19 @@ export interface ClientToServerEvents {
   join_room: (payload: RoomRequest & { roomId: string }, ack: (result: RoomResult) => void) => void;
   select_mage: (mage: MageId, ack?: (result: RoomResult) => void) => void;
   start_game: (ack?: (result: RoomResult) => void) => void;
+  farm_progress: (progress: FarmProgress) => void;
+  farm_completed: (build: FinalBuild, ack?: (result: RoomResult) => void) => void;
+  start_pvp: (ack?: (result: RoomResult) => void) => void;
   player_input: (input: ClientInput) => void; dash: () => void; special: () => void; use_active: () => void;
   choose_item: (item: ItemId, ack?: (result: RoomResult) => void) => void;
   reset_game: (ack?: (result: RoomResult) => void) => void; test_action: (action: 'kill_boss' | 'win_pvp') => void;
+  debug_ping: (sentAt: number, ack: (sentAt: number) => void) => void;
 }
 export interface ServerToClientEvents {
   connection_state: (state: ConnectionState) => void; selection_state: (state: SelectionState) => void;
   phase_changed: (phase: GamePhase) => void; snapshot: (snapshot: WorldSnapshot) => void;
+  room_state: (state: FarmRoomState) => void; farm_status_updated: (state: FarmRoomState) => void;
+  farm_completed_ack: (state: FarmRoomState) => void; farm_completed_rejected: (message: string) => void;
   item_offer: (offer: ItemId[]) => void; item_chosen: (items: ItemId[]) => void;
   player_died: (playerId: string) => void; game_over: (payload: { winnerId?: string; players: PlayerSnapshot[] }) => void;
   game_reset: () => void; error_message: (message: string) => void;

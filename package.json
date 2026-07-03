@@ -1,7 +1,12 @@
 {
   "name": "magefall-last-spell",
   "version": "0.1.0",
+  "description": "Arena roguelite 3D para amigos, com farm solo e PvP final autoritativo online.",
   "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "scripts": {
     "dev": "concurrently \"vite\" \"cross-env ALLOW_TEST_MODE=true tsx watch server/src/index.ts\"",

@@ -45,7 +45,7 @@ export function addItem(current: ItemId[], id: ItemId): ItemId[] {
 }
 
 export function offerForLevel(level: number, owned: ItemId[]): ItemId[] {
-  const pool = level === 3 ? ACTIVE_ITEM_IDS : level === 1 ? ITEM_IDS.filter(id => !ITEMS[id].active) : ITEM_IDS;
+  const pool = level === 3 ? ACTIVE_ITEM_IDS : ITEM_IDS.filter(id => !ITEMS[id].active);
   const available = pool.filter(id => !owned.includes(id));
   const start = ((level - 1) * 3) % available.length;
   return [0, 1, 2].map(i => available[(start + i * 3) % available.length]!).filter((id, i, all) => all.indexOf(id) === i);

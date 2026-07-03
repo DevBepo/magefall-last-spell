@@ -3,9 +3,9 @@ import type { Server, Socket } from 'socket.io';
 import { ITEMS, addItem, calculateStats, offerForLevel } from '../../shared/config/items.js';
 import { MAGES } from '../../shared/config/mages.js';
 import { applyDamage, cooldownReady, segmentCircleHit, tryFreeze } from '../../shared/game/combat.js';
-import { determineWinner, lobbyCanStart } from '../../shared/game/onlineRules.js';
-import type { ClientInput, ClientToServerEvents, PlayerSnapshot, ServerToClientEvents, WorldSnapshot } from '../../shared/protocol.js';
-import type { Combatant, GamePhase, ItemId, MageId, Stats, Vec2 } from '../../shared/types.js';
+import { determineWinner, lobbyCanStart, validateFinalBuild } from '../../shared/game/onlineRules.js';
+import type { ClientInput, ClientToServerEvents, FarmRoomState, FinalBuild, PlayerSnapshot, ServerToClientEvents, WorldSnapshot } from '../../shared/protocol.js';
+import type { Combatant, FarmProgress, FarmStatus, GamePhase, ItemId, MageId, Stats, Vec2 } from '../../shared/types.js';
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type GameIO = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -16,6 +16,7 @@ interface ServerPlayer extends Omit<Combatant, 'mage'> {
   lastSpecialAt: number; specialUntil: number; echoReady: boolean; hitCount: number; barrierReadyAt: number;
   lastActiveAt: number;
   respawnAt?: number; selectedOffer: ItemId[]; testMode: boolean; testPlayers: 2 | 4;
+  farmStatus: FarmStatus; farmProgress: FarmProgress; readyForPvp: boolean; finalStats?: Stats;
 }
 interface ServerProjectile { id: number; ownerId: string; mage: MageId; position: Vec2; previous: Vec2; velocity: Vec2; damage: number; age: number; explosive: boolean; freeze: boolean }
 interface ServerTelegraph { id: number; position: Vec2; radius: number; damage: number; triggerAt: number }
@@ -26,6 +27,9 @@ const emptyInput = (): ClientInput => ({ sequence: 0, movement: { x: 0, z: 0 }, 
 const pveArenaRadius = 15.2;
 const pvpArenaRadius = 25.5;
 const obstacles = [{ x: -6, z: -4, r: 1.65 }, { x: 5, z: 4, r: 1.65 }, { x: -5, z: 6, r: 1.65 }, { x: 6, z: -6, r: 1.65 }];
+const maxProjectiles = 160;
+const round = (value: number): number => Math.round(value * 1000) / 1000;
+const roundedPosition = (position: Vec2): Vec2 => ({ x: round(position.x), z: round(position.z) });
 
 export class GameRoom {
   readonly players = new Map<string, ServerPlayer>();
@@ -37,7 +41,6 @@ export class GameRoom {
   readonly minions: ServerMinion[] = [];
   private level = 0;
   private now = 0;
-  private lastSnapshotAt = 0;
   private entityId = 1;
   private loop?: NodeJS.Timeout;
   private nextPlayerIndex = 1;
@@ -83,6 +86,7 @@ export class GameRoom {
       lastDashAt: -99, lastSpecialAt: -99, specialUntil: 0, echoReady: false, hitCount: 0,
       barrierReadyAt: 0, selectedOffer: [],
       lastActiveAt: -99,
+      farmStatus: 'not-started', farmProgress: 'level-1', readyForPvp: false,
     };
     this.players.set(id, player); this.hostId ??= id; socket.data.playerId = id; socket.data.roomId = this.roomId; socket.join(this.socketRoom);
     socket.emit('connection_state', { roomId: this.roomId, playerId: id, reconnectToken: player.reconnectToken, testMode, isHost: id === this.hostId });
@@ -109,7 +113,29 @@ export class GameRoom {
     if (!player || player.id !== this.hostId) return { ok: false, message: 'Apenas o host pode iniciar a partida.' };
     if (this.phase !== 'mage-selection') return { ok: false, message: 'A partida já foi iniciada.' };
     if (!lobbyCanStart(connected, 2)) return { ok: false, message: 'São necessários 2 jogadores com magos escolhidos.' };
-    this.startFarm(1); return { ok: true };
+    this.clearWorld(); this.phase = 'solo-farm';
+    for (const p of connected) { p.farmStatus = 'farming'; p.farmProgress = 'level-1'; p.readyForPvp = false; p.items = []; p.finalStats = undefined; }
+    this.io.to(this.socketRoom).emit('phase_changed', this.phase); this.emitFarmState(); return { ok: true };
+  }
+
+  updateFarmProgress(socket: GameSocket, progress: FarmProgress): void { const p = this.playerFor(socket); if (!p || this.phase !== 'solo-farm' || p.farmStatus !== 'farming') return; p.farmProgress = progress; this.emitFarmState(); }
+
+  completeFarm(socket: GameSocket, build: FinalBuild): { ok: boolean; message?: string } {
+    const p = this.playerFor(socket); const reject = (message: string) => { socket.emit('farm_completed_rejected', message); return { ok: false, message }; };
+    if (!p) return reject('Jogador não pertence à sala.');
+    if (this.phase !== 'solo-farm' && this.phase !== 'waiting-for-pvp') return reject('A sala não está aceitando builds de farm.');
+    if (p.farmStatus === 'completed') return reject('O farm deste jogador já foi concluído.');
+    if (!p.mage) return reject('Escolha um mago antes do farm.');
+    const error = validateFinalBuild(build, p.mage); if (error) return reject(error);
+    p.items = [...build.selectedItems, build.activeRelic]; p.finalStats = { ...build.finalStats }; p.farmStatus = 'completed'; p.farmProgress = 'completed'; p.readyForPvp = true;
+    this.phase = 'waiting-for-pvp'; const state = this.farmState(); socket.emit('farm_completed_ack', state); this.io.to(this.socketRoom).emit('phase_changed', this.phase); this.emitFarmState(); return { ok: true };
+  }
+
+  beginPvp(socket: GameSocket): { ok: boolean; message?: string } {
+    const p = this.playerFor(socket); if (!p || p.id !== this.hostId) return { ok: false, message: 'Apenas o host pode iniciar o PvP.' };
+    if (this.phase !== 'waiting-for-pvp' && this.phase !== 'solo-farm') return { ok: false, message: 'O PvP não pode ser iniciado agora.' };
+    if ([...this.players.values()].filter(x => x.connected && x.readyForPvp).length < 2) return { ok: false, message: 'São necessários pelo menos 2 jogadores prontos.' };
+    this.startPvp(); return { ok: true };
   }
 
   setInput(socket: GameSocket, input: ClientInput): void {
@@ -172,7 +198,7 @@ export class GameRoom {
     this.phase = 'reset'; this.io.to(this.socketRoom).emit('phase_changed', this.phase);
     setTimeout(() => {
       this.clearWorld(); this.phase = 'mage-selection'; this.winnerId = undefined; this.level = 0;
-      for (const p of this.players.values()) { p.mage = undefined; p.items = []; p.selectedOffer = []; p.alive = true; }
+      for (const p of this.players.values()) { p.mage = undefined; p.items = []; p.selectedOffer = []; p.alive = true; p.farmStatus = 'not-started'; p.farmProgress = 'level-1'; p.readyForPvp = false; p.finalStats = undefined; }
       this.io.to(this.socketRoom).emit('game_reset'); this.io.to(this.socketRoom).emit('phase_changed', this.phase); this.emitSelection();
     }, 250);
     return { ok: true };
@@ -186,11 +212,11 @@ export class GameRoom {
 
   snapshot(): WorldSnapshot {
     return {
-      serverTime: this.now, phase: this.phase, players: [...this.players.values()].filter(p => p.mage).map(p => this.playerSnapshot(p)),
-      projectiles: this.projectiles.map(p => ({ id: p.id, ownerId: p.ownerId, mage: p.mage, position: { ...p.position }, explosive: p.explosive })),
-      telegraphs: this.telegraphs.map(t => ({ id: t.id, position: { ...t.position }, radius: t.radius, triggerAt: t.triggerAt })),
-      minions: this.minions.map(m => ({ id: m.id, position: { ...m.position }, hp: m.hp })),
-      boss: this.boss ? { level: this.boss.level, position: { ...this.boss.position }, hp: this.boss.hp, maxHp: this.boss.maxHp, angle: this.boss.angle } : undefined,
+      serverTime: round(this.now), phase: this.phase, players: [...this.players.values()].filter(p => p.mage && (this.phase !== 'pvp' || p.readyForPvp)).map(p => this.playerSnapshot(p)),
+      projectiles: this.projectiles.map(p => ({ id: p.id, ownerId: p.ownerId, mage: p.mage, position: roundedPosition(p.position), explosive: p.explosive })),
+      telegraphs: this.telegraphs.map(t => ({ id: t.id, position: roundedPosition(t.position), radius: round(t.radius), triggerAt: round(t.triggerAt) })),
+      minions: this.minions.map(m => ({ id: m.id, position: roundedPosition(m.position), hp: round(m.hp) })),
+      boss: this.boss ? { level: this.boss.level, position: roundedPosition(this.boss.position), hp: round(this.boss.hp), maxHp: this.boss.maxHp, angle: round(this.boss.angle) } : undefined,
       winnerId: this.winnerId,
     };
   }
@@ -207,7 +233,7 @@ export class GameRoom {
   private startPvp(): void {
     this.clearWorld(); this.phase = 'pvp';
     const starts = [{ x: 0, z: 21 }, { x: -20, z: -12 }, { x: 20, z: -12 }, { x: 0, z: -21 }, { x: -22, z: 5 }, { x: 22, z: 5 }];
-    [...this.players.values()].filter(p => p.mage).forEach((p, i) => { this.resetPlayer(p, starts[i] ?? { x: 0, z: 0 }); p.invulnerableUntil = this.now + 3; });
+    [...this.players.values()].filter(p => p.mage && p.readyForPvp).forEach((p, i) => { this.resetPlayer(p, starts[i] ?? { x: 0, z: 0 }); p.invulnerableUntil = this.now + 3; });
     this.io.to(this.socketRoom).emit('phase_changed', this.phase); this.emitSnapshot();
   }
 
@@ -220,10 +246,10 @@ export class GameRoom {
   private tick(dt: number): void {
     this.now += dt; this.cleanupDisconnected();
     if (this.isCombat()) {
-      for (const p of this.players.values()) this.updatePlayer(p, dt);
+      for (const p of this.players.values()) if (p.readyForPvp) this.updatePlayer(p, dt);
       this.updateProjectiles(dt); this.updateBoss(dt); this.updateMinions(dt); this.updateTelegraphs(); this.checkEnd();
     }
-    if (this.now - this.lastSnapshotAt >= 1 / 12) { this.lastSnapshotAt = this.now; this.emitSnapshot(); }
+    this.emitSnapshot();
   }
 
   private updatePlayer(p: ServerPlayer, dt: number): void {
@@ -246,6 +272,7 @@ export class GameRoom {
   }
 
   private spawnProjectile(p: ServerPlayer, direction: Vec2, damage: number, explosive: boolean, freeze: boolean): void {
+    if (this.projectiles.length >= maxProjectiles) this.projectiles.splice(0, this.projectiles.length - maxProjectiles + 1);
     this.projectiles.push({ id: this.entityId++, ownerId: p.id, mage: p.mage!, position: { x: p.position.x + direction.x, z: p.position.z + direction.z }, previous: { ...p.position }, velocity: { x: direction.x * (explosive ? 13 : 19), z: direction.z * (explosive ? 13 : 19) }, damage, age: 0, explosive, freeze });
   }
 
@@ -306,8 +333,8 @@ export class GameRoom {
       for (const p of this.players.values()) if (p.mage) { p.selectedOffer = offerForLevel(this.level, p.items); this.socketFor(p)?.emit('item_offer', p.selectedOffer); }
     }
     if (this.phase === 'pvp') {
-      const alive = [...this.players.values()].filter(p => p.mage && p.alive);
-      if (alive.length <= 1) { this.winnerId = determineWinner([...this.players.values()].filter(p => p.mage)); this.phase = 'result'; this.io.to(this.socketRoom).emit('phase_changed', this.phase); this.io.to(this.socketRoom).emit('game_over', { winnerId: this.winnerId, players: [...this.players.values()].filter(p => p.mage).map(p => this.playerSnapshot(p)) }); }
+      const participants = [...this.players.values()].filter(p => p.mage && p.readyForPvp); const alive = participants.filter(p => p.alive);
+      if (alive.length <= 1) { this.winnerId = determineWinner(participants); this.phase = 'result'; this.io.to(this.socketRoom).emit('phase_changed', this.phase); this.io.to(this.socketRoom).emit('game_over', { winnerId: this.winnerId, players: participants.map(p => this.playerSnapshot(p)) }); }
     }
   }
 
@@ -339,11 +366,13 @@ export class GameRoom {
   }
 
   private clearWorld(): void { this.boss = undefined; this.projectiles.length = 0; this.telegraphs.length = 0; this.minions.length = 0; }
-  private isCombat(): boolean { return this.phase.startsWith('farm') || this.phase === 'pvp'; }
+  private isCombat(): boolean { return this.phase === 'pvp'; }
   private playerFor(socket: GameSocket): ServerPlayer | undefined { return typeof socket.data.playerId === 'string' ? this.players.get(socket.data.playerId) : undefined; }
   private socketFor(p: ServerPlayer): GameSocket | undefined { return p.socketId ? this.io.sockets.sockets.get(p.socketId) : undefined; }
   private cleanName(name: string | undefined, index: number): string { const cleaned = (name ?? '').replace(/\s+/g, ' ').trim().slice(0, 16); return cleaned || `Player ${index}`; }
-  private playerSnapshot(p: ServerPlayer): PlayerSnapshot { const active = p.items.find(id => ITEMS[id].active); return { id: p.id, name: p.name, playerIndex: p.playerIndex, mage: p.mage, position: { ...p.position }, rotation: p.rotation, hp: p.hp, maxHp: p.stats.maxHp, shield: p.shield, alive: p.alive, connected: p.connected, items: [...p.items], dashCooldown: Math.max(0, p.stats.dashCooldown - (this.now - p.lastDashAt)), specialCooldown: Math.max(0, p.stats.specialCooldown - (this.now - p.lastSpecialAt)), activeCooldown: Math.max(0, (active ? ITEMS[active].cooldown ?? 12 : 0) - (this.now - p.lastActiveAt)), slowedUntil: p.slowedUntil, frozenUntil: p.frozenUntil, specialUntil: p.specialUntil }; }
+  private playerSnapshot(p: ServerPlayer): PlayerSnapshot { const active = p.items.find(id => ITEMS[id].active); return { id: p.id, name: p.name, playerIndex: p.playerIndex, mage: p.mage, position: roundedPosition(p.position), rotation: round(p.rotation), hp: round(p.hp), maxHp: p.stats.maxHp, shield: round(p.shield), alive: p.alive, connected: p.connected, items: [...p.items], dashCooldown: round(Math.max(0, p.stats.dashCooldown - (this.now - p.lastDashAt))), specialCooldown: round(Math.max(0, p.stats.specialCooldown - (this.now - p.lastSpecialAt))), activeCooldown: round(Math.max(0, (active ? ITEMS[active].cooldown ?? 12 : 0) - (this.now - p.lastActiveAt))), slowedUntil: round(p.slowedUntil), frozenUntil: round(p.frozenUntil), specialUntil: round(p.specialUntil) }; }
   private emitSelection(): void { const connected = [...this.players.values()].filter(p => p.connected); this.io.to(this.socketRoom).emit('selection_state', { roomId: this.roomId, players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, playerIndex: p.playerIndex, mage: p.mage, connected: p.connected, isHost: p.id === this.hostId })), minPlayers: 2, maxPlayers: this.maxPlayers, canStart: lobbyCanStart(connected, 2) }); }
   private emitSnapshot(): void { this.io.to(this.socketRoom).emit('snapshot', this.snapshot()); }
+  farmState(): FarmRoomState { const players = [...this.players.values()].map(p => ({ playerId: p.id, nickname: p.name, mageId: p.mage, playerIndex: p.playerIndex, connected: p.connected, farmStatus: p.farmStatus, farmProgress: p.farmProgress, selectedItems: p.items.filter(id => !ITEMS[id].active), activeRelic: p.items.find(id => ITEMS[id].active), finalStats: p.finalStats, readyForPvp: p.readyForPvp, isHost: p.id === this.hostId })); return { roomId: this.roomId, phase: this.phase, players, canStartPvp: players.filter(p => p.connected && p.readyForPvp).length >= 2 }; }
+  private emitFarmState(): void { const state = this.farmState(); this.io.to(this.socketRoom).emit('room_state', state); this.io.to(this.socketRoom).emit('farm_status_updated', state); }
 }

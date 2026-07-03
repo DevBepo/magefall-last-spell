@@ -2,7 +2,10 @@ import type { GamePhase } from '../types.js';
 
 const transitions: Record<GamePhase, GamePhase[]> = {
   loading: ['mage-selection'],
-  'mage-selection': ['farm-level-1'],
+  'mage-selection': ['farm-level-1', 'solo-farm'],
+  'solo-farm': ['waiting-for-pvp'],
+  'waiting-for-pvp': ['pvp-countdown', 'pvp'],
+  'pvp-countdown': ['pvp'],
   'farm-level-1': ['item-choice-1'],
   'item-choice-1': ['farm-level-2'],
   'farm-level-2': ['item-choice-2'],

@@ -8,6 +8,7 @@ export class InputController {
   specialRequested = false;
   activeRequested = false;
   private lastAim = new THREE.Vector2(0, -1);
+  private movementResult = new THREE.Vector2();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener('keydown', e => {
@@ -30,16 +31,16 @@ export class InputController {
   movement(): THREE.Vector2 {
     const x = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
     const z = (this.keys.has('KeyS') ? 1 : 0) - (this.keys.has('KeyW') ? 1 : 0);
-    return new THREE.Vector2(x, z).normalize();
+    return this.movementResult.set(x, z).normalize();
   }
 
   keyboardAim(): THREE.Vector2 | undefined {
     const x = (this.keys.has('ArrowRight') || this.keys.has('KeyL') ? 1 : 0) - (this.keys.has('ArrowLeft') || this.keys.has('KeyJ') ? 1 : 0);
     const z = (this.keys.has('ArrowDown') || this.keys.has('KeyK') ? 1 : 0) - (this.keys.has('ArrowUp') || this.keys.has('KeyI') ? 1 : 0);
     if (x || z) this.lastAim.set(x, z).normalize();
-    return x || z ? this.lastAim.clone() : undefined;
+    return x || z ? this.lastAim : undefined;
   }
-  aimFallback(): THREE.Vector2 { const move = this.movement(); if (move.lengthSq()) this.lastAim.copy(move); return this.lastAim.clone(); }
+  aimFallback(): THREE.Vector2 { const move = this.movement(); if (move.lengthSq()) this.lastAim.copy(move); return this.lastAim; }
   get keyboardShooting(): boolean { return this.keys.has('Enter'); }
 
   consumeDash(): boolean { const value = this.dashRequested; this.dashRequested = false; return value; }

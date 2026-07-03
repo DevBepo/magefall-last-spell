@@ -23,6 +23,18 @@ test-results/
 # Tool caches
 .cache/
 .vite/
+.parcel-cache/
+.turbo/
+.eslintcache
+*.tsbuildinfo
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*~
 
 # Editors and operating systems
 .idea/

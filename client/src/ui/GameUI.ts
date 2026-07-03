@@ -1,6 +1,6 @@
 import { ITEMS } from '../../../shared/config/items';
 import { MAGES } from '../../../shared/config/mages';
-import type { SelectionState } from '../../../shared/protocol';
+import type { FarmRoomState, SelectionState } from '../../../shared/protocol';
 import type { ItemId, MageId } from '../../../shared/types';
 
 export interface HudData {
@@ -8,17 +8,21 @@ export interface HudData {
   items: ItemId[]; bossHp?: number; bossMaxHp?: number; phaseLabel: string; players?: Array<{ name: string; playerIndex: number; alive: boolean }>;
 }
 
+export interface DebugData { fps: number; rtt: number; averageRtt: number; snapshotRate: number; perceivedTickRate: number; players: number; projectiles: number; minions: number; snapshotBytes: number; interpolationDelay: number; connection: string }
+
 export class GameUI {
   readonly root: HTMLElement;
   private overlay!: HTMLElement;
   private hud!: HTMLElement;
   private toast!: HTMLElement;
+  private debug?: HTMLElement;
   onSelectMage?: (id: MageId) => void;
   onSelectItem?: (id: ItemId) => void;
   onRestart?: () => void;
   onCreateRoom?: (name: string) => void;
   onJoinRoom?: (name: string, roomId: string) => void;
   onStartGame?: () => void;
+  onStartPvp?: () => void;
 
   constructor(host: HTMLElement) {
     host.innerHTML = `<div id="viewport"></div><div id="hud"></div><div id="overlay"></div><div id="toast"></div><div class="controls">WASD mover · Mouse ou setas/IJKL mirar · Clique/Enter atacar · Espaço dash · Q especial · E item</div>`;
@@ -26,6 +30,7 @@ export class GameUI {
     this.overlay = host.querySelector('#overlay')!;
     this.hud = host.querySelector('#hud')!;
     this.toast = host.querySelector('#toast')!;
+    if (new URLSearchParams(location.search).get('debug') === '1') { this.debug = document.createElement('pre'); this.debug.id = 'debug-overlay'; host.append(this.debug); }
   }
 
   showLoading(): void {
@@ -88,10 +93,22 @@ export class GameUI {
     if (data.players) this.hud.insertAdjacentHTML('beforeend', `<div class="hud-roster">${data.players.map(p => `<span class="player-${p.playerIndex} ${p.alive ? '' : 'dead'}">P${p.playerIndex} ${this.escape(p.name)}</span>`).join('')}</div>`);
   }
 
+  showWaiting(state: FarmRoomState, playerId?: string): void {
+    const me = state.players.find(p => p.playerId === playerId); const build = [...(me?.selectedItems ?? []), ...(me?.activeRelic ? [me.activeRelic] : [])];
+    this.overlay.className = 'overlay visible result'; this.hud.innerHTML = '';
+    this.overlay.innerHTML = `<div class="eyebrow">AGUARDANDO PVP</div><h2>Você terminou o farm</h2><p>Sua build</p><div class="result-items">${build.map(id => `<span title="${ITEMS[id].name}">${ITEMS[id].icon}</span>`).join('')}</div><ul>${state.players.map(p => `<li class="player-${p.playerIndex}"><strong>${this.escape(p.nickname)}</strong> — ${p.readyForPvp ? 'Pronto para PvP' : 'Farmando'}</li>`).join('')}</ul>${me?.isHost ? `<button id="start-pvp" ${state.canStartPvp ? '' : 'disabled'}>Iniciar PvP</button><p>${state.players.some(p => !p.readyForPvp) ? 'Ainda há jogadores farmando.' : 'Todos terminaram.'}</p>` : `<p>${state.canStartPvp ? 'Aguardando host iniciar' : 'Aguardando outros jogadores'}</p>`}`;
+    this.overlay.querySelector<HTMLElement>('#start-pvp')?.addEventListener('click', () => this.onStartPvp?.());
+  }
+
   message(text: string, duration = 1800): void {
     this.toast.textContent = text;
     this.toast.classList.add('show');
     window.setTimeout(() => this.toast.classList.remove('show'), duration);
+  }
+
+  updateDebug(data: DebugData): void {
+    if (!this.debug) return;
+    this.debug.textContent = `FPS ${data.fps.toFixed(0)}\nPING ${data.rtt.toFixed(0)} ms · AVG ${data.averageRtt.toFixed(0)} ms\nSNAP ${data.snapshotRate.toFixed(1)} Hz · TICK ${data.perceivedTickRate.toFixed(1)} Hz\nPLAYERS ${data.players} · SHOTS ${data.projectiles} · MINIONS ${data.minions}\nPAYLOAD ~${data.snapshotBytes} B\nBUFFER ${data.interpolationDelay} ms\nSOCKET ${data.connection}`;
   }
 
   private escape(text: string): string { const span = document.createElement('span'); span.textContent = text; return span.innerHTML; }

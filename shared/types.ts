@@ -7,10 +7,14 @@ export type ItemId =
 
 export type GamePhase =
   | 'loading' | 'mage-selection'
+  | 'solo-farm' | 'waiting-for-pvp' | 'pvp-countdown'
   | 'farm-level-1' | 'item-choice-1'
   | 'farm-level-2' | 'item-choice-2'
   | 'farm-level-3' | 'item-choice-3'
   | 'pvp' | 'result' | 'reset';
+
+export type FarmStatus = 'not-started' | 'farming' | 'completed';
+export type FarmProgress = 'level-1' | 'level-2' | 'level-3' | 'completed';
 
 export interface Stats {
   maxHp: number;

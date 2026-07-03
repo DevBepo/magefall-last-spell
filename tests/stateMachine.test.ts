@@ -4,7 +4,7 @@ import { GameStateMachine, canTransition, nextPhase } from '../shared/game/state
 describe('máquina de estados', () => {
   it('percorre uma partida completa', () => {
     const game = new GameStateMachine();
-    const expected = ['mage-selection', 'farm-level-1', 'item-choice-1', 'farm-level-2', 'item-choice-2', 'farm-level-3', 'item-choice-3', 'pvp', 'result', 'reset', 'mage-selection'] as const;
+    const expected = ['mage-selection', 'solo-farm', 'waiting-for-pvp', 'pvp', 'result', 'reset', 'mage-selection'] as const;
     for (const phase of expected) game.transition(phase);
     expect(game.phase).toBe('mage-selection');
   });
